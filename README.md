@@ -1,37 +1,127 @@
-## Welcome to GitHub Pages
+<?php
 
-You can use the [editor on GitHub](https://github.com/wsj123/readTest/edit/master/README.md) to maintain and preview the content for your website in Markdown files.
+namespace app\controllers;
 
-Whenever you commit to this repository, GitHub Pages will run [Jekyll](https://jekyllrb.com/) to rebuild the pages in your site, from the content in your Markdown files.
+use app\components\BaseController;
+use app\models\GameAlias;
+use app\models\Subject;
+use yii\filters\AccessControl;
+use yii\filters\VerbFilter;
+use yii\helpers\Json;
+use yii\web\HttpException;
+use app\models\Activity;
+use Yii;
 
-### Markdown
+class GameController extends BaseController
+{
+    /**
+     * @inheritdoc
+     */
+    public function behaviors()
+    {
+        return [
+            'access' => [
+                'class' => AccessControl::className(),
+                'only' => ['logout'],
+                'rules' => [
+                    [
+                        'actions' => ['logout'],
+                        'allow' => true,
+                        'roles' => ['@'],
+                    ],
+                ],
+            ],
+            'verbs' => [
+                'class' => VerbFilter::className(),
+                'actions' => [
+                    'logout' => ['post'],
+                ],
+            ],
+        ];
+    }
 
-Markdown is a lightweight and easy-to-use syntax for styling your writing. It includes conventions for
+    /**
+     * @inheritdoc
+     */
+    public function actions()
+    {
+        return [
+            'error' => [
+                'class' => 'yii\web\ErrorAction',
+            ]
+        ];
+    }
 
-```markdown
-Syntax highlighted code block
+    /**
+     * Displays homepage.
+     *
+     * @return string
+     */
+    public function actionIndex($tag,$bei,$wen,$theme,$id,$alias_id=null)
+    {
+        // 设置key为id的md5值
+        $alias_string = $alias_id == null ? '' : $alias_id;
+        $redisKey =  md5($id.$bei.$wen.$theme.$tag.$alias_string);
+        $redis    = Yii::$app->redis;
+        $data     = $redis->get($redisKey);
+        if (!$data) {
+            $data = Activity::find()
+                ->select(['download_url','referer','is_down','alias_info'])
+                ->where(['substring(referer,9)'=>$id])
+                //->andWhere(['is_package'=>2])
+                ->asArray()->one();
+            if($data) {
+                $data['beian'] = "";
+                $data['wen']   = "";
+                $beiRet = Subject::findOne($bei);
+                $wenRet = Subject::findOne($wen);
+                if($beiRet){
+                    $data['beian'] = $beiRet->name;
+                }
+                if($wenRet){
+                    $data['wen'] = $wenRet->name;
+                }
+                // 获取别名信息
+                $aliasInfo = GameAlias::findOne(['id'=>$alias_id]);
+                $data['alias'] = $data['icon'] = '';
+                if ($aliasInfo) {
+                    $data['alias'] = $aliasInfo['alias'];
+                    $data['icon'] = $aliasInfo['icon'];
+                }
 
-# Header 1
-## Header 2
-### Header 3
+                $data['id'] = $id;
+                $data = Json::encode($data);
+                $redis->set($redisKey, $data);
+                $redis->expire($redisKey, 60);
+            }
+        }
 
-- Bulleted
-- List
+        $activeData = array('download_url'=>'','wen'=>'','beian'=>'','referer'=>'','is_down'=>0,'alias'=>'','icon'=>'','id'=>0);
+        $tmpData = Json::decode($data);
+        if ($tmpData){
+            $activeData = $tmpData;
+        }
 
-1. Numbered
-2. List
-
-**Bold** and _Italic_ and `Code` text
-
-[Link](url) and ![Image](src)
-```
-
-For more details see [GitHub Flavored Markdown](https://guides.github.com/features/mastering-markdown/).
-
-### Jekyll Themes
-
-Your Pages site will use the layout and styles from the Jekyll theme you have selected in your [repository settings](https://github.com/wsj123/readTest/settings). The name of this theme is saved in the Jekyll `_config.yml` configuration file.
-
-### Support or Contact
-
-Having trouble with Pages? Check out our [documentation](https://help.github.com/categories/github-pages-basics/) or [contact support](https://github.com/contact) and we’ll help you sort it out.
+        // 控制某些特定的落地页进入并跳转
+        $inRedirect  = array(
+            // '1000016_2006',
+            // '1000016_2007',
+            // '1000016_2008',
+            // '1000016_2009',
+            // '1000016_2010',
+            // '1000016_2011',
+            // '1000016_2012',
+            // '1000016_2013',
+            // '1000016_2014',
+            // '1000016_2015',
+            // '1000016_2016',
+            // '1000016_2017'
+        );
+        $isRedirect = false;
+        if ((in_array($activeData['referer'],$inRedirect)) OR $activeData['is_down']==1){
+            $isRedirect = true;
+            return $this->redirect($activeData['download_url']);
+        }
+        return $this->render('index',['activeData'=>$activeData,'isRedirect'=>$isRedirect]);
+    }
+}
